@@ -26,6 +26,6 @@ Desde este repositorio:
 docker compose up --build
 ```
 
-Abrir [http://localhost:8080](http://localhost:8080).
+Abrir [http://localhost](http://localhost).
 
 El Gateway enruta por HTTP. No comparte TypeScript, memoria ni `node_modules` entre aplicaciones. Cada equipo puede versionar, compilar y desplegar su repo independientemente.
