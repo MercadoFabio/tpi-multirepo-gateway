@@ -1,29 +1,125 @@
 services:
   gateway:
-    image: nginx:alpine
+    image: nginx:1.27-alpine
     ports:
-      - "80:80"
+      - "8080:80"
     volumes:
       - ./nginx.conf:/etc/nginx/nginx.conf:ro
     depends_on:
-      - shell
-      - usuarios
-      - productos
+      - shell-ssr
+      - usuarios-ssr
+      - productos-ssr
+      - bff
 
-  shell:
+  shell-ssr:
     build:
-      context: ../tpi-multirepo-shell
+      context: ..
+      dockerfile: tpi-multirepo-shell-main/Dockerfile
+      target: runtime
     expose:
-      - "80"
+      - "4000"
 
-  usuarios:
+  usuarios-ssr:
     build:
-      context: ../tpi-multirepo-usuarios
+      context: ..
+      dockerfile: tpi-multirepo-usuarios-main/Dockerfile
+      target: runtime
     expose:
-      - "80"
+      - "4000"
 
-  productos:
+  productos-ssr:
     build:
-      context: ../tpi-multirepo-productos
+      context: ..
+      dockerfile: tpi-multirepo-productos-main/Dockerfile
+      target: runtime
     expose:
-      - "80"
+      - "4000"
+
+  bff:
+    build:
+      context: ../tpi-backend-bff-main
+    environment:
+      USERS_SERVICE_URL: http://usuarios-service:8081
+      PRODUCTS_SERVICE_URL: http://productos-service:8082
+      REDIS_URL: redis://session-store:6379
+      DEMO_LOGIN_EMAIL: ${DEMO_LOGIN_EMAIL:?Set DEMO_LOGIN_EMAIL in the environment}
+      DEMO_LOGIN_PASSWORD: ${DEMO_LOGIN_PASSWORD:?Set DEMO_LOGIN_PASSWORD in the environment}
+    expose:
+      - "8080"
+    depends_on:
+      usuarios-service:
+        condition: service_started
+      productos-service:
+        condition: service_started
+      session-store:
+        condition: service_healthy
+
+  usuarios-service:
+    build:
+      context: ../tpi-backend-usuarios-main
+    environment:
+      USERS_DB_URL: jdbc:postgresql://users-db:5432/tpi_usuarios
+      USERS_DB_USERNAME: tpi
+      USERS_DB_PASSWORD: ${USERS_DB_PASSWORD:?Set USERS_DB_PASSWORD in the environment}
+    expose:
+      - "8081"
+    depends_on:
+      users-db:
+        condition: service_healthy
+
+  productos-service:
+    build:
+      context: ../tpi-backend-productos-main
+    environment:
+      PRODUCTS_DB_URL: jdbc:postgresql://products-db:5432/tpi_productos
+      PRODUCTS_DB_USERNAME: tpi
+      PRODUCTS_DB_PASSWORD: ${PRODUCTS_DB_PASSWORD:?Set PRODUCTS_DB_PASSWORD in the environment}
+    expose:
+      - "8082"
+    depends_on:
+      products-db:
+        condition: service_healthy
+
+  users-db:
+    image: postgres:17-alpine
+    environment:
+      POSTGRES_DB: tpi_usuarios
+      POSTGRES_USER: tpi
+      POSTGRES_PASSWORD: ${USERS_DB_PASSWORD:?Set USERS_DB_PASSWORD in the environment}
+    volumes:
+      - users-db-data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U tpi -d tpi_usuarios"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+
+  products-db:
+    image: postgres:17-alpine
+    environment:
+      POSTGRES_DB: tpi_productos
+      POSTGRES_USER: tpi
+      POSTGRES_PASSWORD: ${PRODUCTS_DB_PASSWORD:?Set PRODUCTS_DB_PASSWORD in the environment}
+    volumes:
+      - products-db-data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U tpi -d tpi_productos"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+
+  session-store:
+    image: redis:7.4-alpine
+    command: ["redis-server", "--appendonly", "yes"]
+    volumes:
+      - session-store-data:/data
+    healthcheck:
+      test: ["CMD-SHELL", "redis-cli ping | grep PONG"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+
+volumes:
+  users-db-data:
+  products-db-data:
+  session-store-data:
