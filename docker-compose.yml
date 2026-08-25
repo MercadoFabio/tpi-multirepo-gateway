@@ -14,7 +14,7 @@ services:
   shell-ssr:
     build:
       context: ..
-      dockerfile: tpi-multirepo-shell-main/Dockerfile
+      dockerfile: tpi-multirepo-shell/Dockerfile
       target: runtime
     expose:
       - "4000"
@@ -22,7 +22,7 @@ services:
   usuarios-ssr:
     build:
       context: ..
-      dockerfile: tpi-multirepo-usuarios-main/Dockerfile
+      dockerfile: tpi-multirepo-usuarios/Dockerfile
       target: runtime
     expose:
       - "4000"
@@ -30,14 +30,14 @@ services:
   productos-ssr:
     build:
       context: ..
-      dockerfile: tpi-multirepo-productos-main/Dockerfile
+      dockerfile: tpi-multirepo-productos/Dockerfile
       target: runtime
     expose:
       - "4000"
 
   bff:
     build:
-      context: ../tpi-backend-bff-main
+      context: ../tpi-backend-bff
     environment:
       USERS_SERVICE_URL: http://usuarios-service:8081
       PRODUCTS_SERVICE_URL: http://productos-service:8082
@@ -56,7 +56,7 @@ services:
 
   usuarios-service:
     build:
-      context: ../tpi-backend-usuarios-main
+      context: ../tpi-backend-usuarios
     environment:
       USERS_DB_URL: jdbc:postgresql://users-db:5432/tpi_usuarios
       USERS_DB_USERNAME: tpi
@@ -69,7 +69,7 @@ services:
 
   productos-service:
     build:
-      context: ../tpi-backend-productos-main
+      context: ../tpi-backend-productos
     environment:
       PRODUCTS_DB_URL: jdbc:postgresql://products-db:5432/tpi_productos
       PRODUCTS_DB_USERNAME: tpi
