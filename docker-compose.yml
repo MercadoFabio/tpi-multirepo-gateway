@@ -1,5 +1,8 @@
 services:
-  gateway:
+  # ============================================================================
+  # 1. CAPA FRONTEND & GATEWAY (Puerto 4200)
+  # ============================================================================
+  frontend-gateway:
     image: nginx:1.27-alpine
     ports:
       - "4200:80"
@@ -10,7 +13,10 @@ services:
       - usuarios
       - productos
       - bff
+    networks:
+      - tpi-network
 
+  # Microfrontend: Shell Principal (Dashboard y Login CSR)
   shell:
     build:
       context: ..
@@ -18,7 +24,10 @@ services:
       target: runtime
     expose:
       - "80"
+    networks:
+      - tpi-network
 
+  # Microfrontend: Gestión de Usuarios (CSR)
   usuarios:
     build:
       context: ..
@@ -26,7 +35,10 @@ services:
       target: runtime
     expose:
       - "80"
+    networks:
+      - tpi-network
 
+  # Microfrontend: Catálogo de Productos (CSR)
   productos:
     build:
       context: ..
@@ -34,80 +46,32 @@ services:
       target: runtime
     expose:
       - "80"
+    networks:
+      - tpi-network
 
+  # ============================================================================
+  # 2. CAPA BFF (Backend For Frontend - Puerto 3000)
+  # ============================================================================
   bff:
     build:
       context: ../tpi-backend-bff
     environment:
-      USERS_SERVICE_URL: http://usuarios-service:8080
-      PRODUCTS_SERVICE_URL: http://productos-service:8081
+      # El BFF consume el Backend ÚNICAMENTE a través del Backend API Gateway
+      BACKEND_GATEWAY_URL: http://backend-gateway:8080
       REDIS_URL: redis://session-store:6379
-      DEMO_LOGIN_EMAIL: ${DEMO_LOGIN_EMAIL:?Set DEMO_LOGIN_EMAIL in the environment}
-      DEMO_LOGIN_PASSWORD: ${DEMO_LOGIN_PASSWORD:?Set DEMO_LOGIN_PASSWORD in the environment}
+      DEMO_LOGIN_EMAIL: ${DEMO_LOGIN_EMAIL:-docente@example.test}
+      DEMO_LOGIN_PASSWORD: ${DEMO_LOGIN_PASSWORD:-password123456}
     expose:
       - "3000"
     depends_on:
-      usuarios-service:
-        condition: service_started
-      productos-service:
+      backend-gateway:
         condition: service_started
       session-store:
         condition: service_healthy
+    networks:
+      - tpi-network
 
-  usuarios-service:
-    build:
-      context: ../tpi-backend-usuarios
-    environment:
-      USERS_DB_URL: jdbc:postgresql://users-db:5432/tpi_usuarios
-      USERS_DB_USERNAME: tpi
-      USERS_DB_PASSWORD: ${USERS_DB_PASSWORD:?Set USERS_DB_PASSWORD in the environment}
-    expose:
-      - "8080"
-    depends_on:
-      users-db:
-        condition: service_healthy
-
-  productos-service:
-    build:
-      context: ../tpi-backend-productos
-    environment:
-      PRODUCTS_DB_URL: jdbc:postgresql://products-db:5432/tpi_productos
-      PRODUCTS_DB_USERNAME: tpi
-      PRODUCTS_DB_PASSWORD: ${PRODUCTS_DB_PASSWORD:?Set PRODUCTS_DB_PASSWORD in the environment}
-    expose:
-      - "8081"
-    depends_on:
-      products-db:
-        condition: service_healthy
-
-  users-db:
-    image: postgres:17-alpine
-    environment:
-      POSTGRES_DB: tpi_usuarios
-      POSTGRES_USER: tpi
-      POSTGRES_PASSWORD: ${USERS_DB_PASSWORD:?Set USERS_DB_PASSWORD in the environment}
-    volumes:
-      - users-db-data:/var/lib/postgresql/data
-    healthcheck:
-      test: ["CMD-SHELL", "pg_isready -U tpi -d tpi_usuarios"]
-      interval: 5s
-      timeout: 3s
-      retries: 10
-
-  products-db:
-    image: postgres:17-alpine
-    environment:
-      POSTGRES_DB: tpi_productos
-      POSTGRES_USER: tpi
-      POSTGRES_PASSWORD: ${PRODUCTS_DB_PASSWORD:?Set PRODUCTS_DB_PASSWORD in the environment}
-    volumes:
-      - products-db-data:/var/lib/postgresql/data
-    healthcheck:
-      test: ["CMD-SHELL", "pg_isready -U tpi -d tpi_productos"]
-      interval: 5s
-      timeout: 3s
-      retries: 10
-
+  # Almacén de sesiones seguras en memoria
   session-store:
     image: redis:7.4-alpine
     command: ["redis-server", "--appendonly", "yes"]
@@ -118,6 +82,115 @@ services:
       interval: 5s
       timeout: 3s
       retries: 10
+    networks:
+      - tpi-network
+
+  # ============================================================================
+  # 3. CAPA BACKEND: SERVICE DISCOVERY & API GATEWAY
+  # ============================================================================
+  # Service Discovery (Eureka Server)
+  service-discovery:
+    build:
+      context: ../tpi-backend-discovery
+    expose:
+      - "8761"
+    ports:
+      - "8761:8761"
+    networks:
+      - tpi-network
+
+  # Backend API Gateway (Única puerta de entrada a los microservicios)
+  backend-gateway:
+    image: nginx:1.27-alpine
+    volumes:
+      - ../tpi-backend-gateway/nginx.conf:/etc/nginx/nginx.conf:ro
+    expose:
+      - "8080"
+    depends_on:
+      - service-discovery
+      - usuarios-service
+      - productos-service
+    networks:
+      - tpi-network
+
+  # ============================================================================
+  # 4. CAPA BACKEND: MICROSERVICIOS Y BASES DE DATOS
+  # ============================================================================
+  # Microservicio de Usuarios (Spring Boot)
+  usuarios-service:
+    build:
+      context: ../tpi-backend-usuarios
+    environment:
+      EUREKA_SERVER_URL: http://service-discovery:8761/eureka/
+      USERS_DB_URL: jdbc:postgresql://users-db:5432/tpi_usuarios
+      USERS_DB_USERNAME: tpi
+      USERS_DB_PASSWORD: ${USERS_DB_PASSWORD:-tpi_secret_password}
+    expose:
+      - "8080"
+    depends_on:
+      service-discovery:
+        condition: service_started
+      users-db:
+        condition: service_healthy
+    networks:
+      - tpi-network
+
+  # Microservicio de Productos (Spring Boot)
+  productos-service:
+    build:
+      context: ../tpi-backend-productos
+    environment:
+      EUREKA_SERVER_URL: http://service-discovery:8761/eureka/
+      PRODUCTS_DB_URL: jdbc:postgresql://products-db:5432/tpi_productos
+      PRODUCTS_DB_USERNAME: tpi
+      PRODUCTS_DB_PASSWORD: ${PRODUCTS_DB_PASSWORD:-tpi_secret_password}
+    expose:
+      - "8081"
+    depends_on:
+      service-discovery:
+        condition: service_started
+      products-db:
+        condition: service_healthy
+    networks:
+      - tpi-network
+
+  # Base de Datos Usuarios (PostgreSQL)
+  users-db:
+    image: postgres:17-alpine
+    environment:
+      POSTGRES_DB: tpi_usuarios
+      POSTGRES_USER: tpi
+      POSTGRES_PASSWORD: ${USERS_DB_PASSWORD:-tpi_secret_password}
+    volumes:
+      - users-db-data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U tpi -d tpi_usuarios"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+    networks:
+      - tpi-network
+
+  # Base de Datos Productos (PostgreSQL)
+  products-db:
+    image: postgres:17-alpine
+    environment:
+      POSTGRES_DB: tpi_productos
+      POSTGRES_USER: tpi
+      POSTGRES_PASSWORD: ${PRODUCTS_DB_PASSWORD:-tpi_secret_password}
+    volumes:
+      - products-db-data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U tpi -d tpi_productos"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+    networks:
+      - tpi-network
+
+networks:
+  tpi-network:
+    driver: bridge
 
 volumes:
   users-db-data:
